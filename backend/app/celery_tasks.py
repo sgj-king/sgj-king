@@ -115,19 +115,33 @@ def process_publish_queue(self, batch_size: int = 5):
                 # 发布执行器（当前为最小骨架；后续补齐 selector）
                 from app.services.publisher import XiaohongshuPublisher
 
-                async def do_publish():
-                    async with XiaohongshuPublisher(headless=True, timeout_ms=flask_app.config.get('PLAYWRIGHT_TIMEOUT', 30000)) as pub:
-                        return await pub.publish_note(
-                            cookies=cookies,
-                            title=content.title,
-                            body=content.body,
-                            tags=content.tags or [],
-                            images=content.images or [],
-                            mode=os.getenv('PUBLISH_MODE', 'semi'),
-                            publish_url=os.getenv('XHS_PUBLISH_IMAGE_URL', 'https://creator.xiaohongshu.com/publish/publish?source=official&from=menu&target=image'),
-                        )
+                publish_mode = os.getenv('PUBLISH_MODE', 'semi')
+                publish_url = os.getenv('XHS_PUBLISH_IMAGE_URL', 'https://creator.xiaohongshu.com/publish/publish?source=official&from=menu&target=image')
 
-                publish_result = asyncio.run(do_publish())
+                # local-semi: 不在容器内跑 Playwright，直接进入手动发布
+                if publish_mode == 'local':
+                    class _LocalResult:
+                        ok = False
+                        manual_required = True
+                        error = f"请在本机浏览器打开发布页并手动发布：{publish_url}"
+                        debug_dir = None
+                        note_id = None
+                        note_url = None
+                    publish_result = _LocalResult()
+                else:
+                    async def do_publish():
+                        async with XiaohongshuPublisher(headless=True, timeout_ms=flask_app.config.get('PLAYWRIGHT_TIMEOUT', 30000)) as pub:
+                            return await pub.publish_note(
+                                cookies=cookies,
+                                title=content.title,
+                                body=content.body,
+                                tags=content.tags or [],
+                                images=content.images or [],
+                                mode=publish_mode,
+                                publish_url=publish_url,
+                            )
+
+                    publish_result = asyncio.run(do_publish())
 
                 if getattr(publish_result, 'ok', False):
                     item.status = 'success'
