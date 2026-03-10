@@ -13,7 +13,7 @@ const publicPaths = ['/login', '/register'];
 export function AuthGuard({ children }: AuthGuardProps) {
   const router = useRouter();
   const pathname = usePathname();
-  const { token } = useAuthStore();
+  const { token, setToken } = useAuthStore();
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
@@ -23,13 +23,34 @@ export function AuthGuard({ children }: AuthGuardProps) {
       return;
     }
 
-    // 仅依赖 token 判断（避免刷新后 isAuthenticated 丢失）
-    if (!token) {
+    // 尝试从 localStorage 恢复 token
+    let effectiveToken = token;
+    if (!effectiveToken && typeof window !== 'undefined') {
+      const direct = localStorage.getItem('token');
+      if (direct) {
+        effectiveToken = direct;
+        setToken(direct);
+      } else {
+        const persisted = localStorage.getItem('redflow-auth');
+        if (persisted) {
+          try {
+            const parsed = JSON.parse(persisted);
+            const persistedToken = parsed?.state?.token;
+            if (persistedToken) {
+              effectiveToken = persistedToken;
+              setToken(persistedToken);
+            }
+          } catch {}
+        }
+      }
+    }
+
+    if (!effectiveToken) {
       router.push('/login');
     } else {
       setChecking(false);
     }
-  }, [pathname, token, router]);
+  }, [pathname, token, router, setToken]);
 
   // 公开页面直接显示
   if (publicPaths.includes(pathname)) {
