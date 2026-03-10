@@ -91,12 +91,14 @@ export default function ContentsPage() {
     }
 
     const tags = (content.tags || []).map((t: string) => `#${t}`).join(' ');
+    const images = (content.images || []).map((img: any) => img?.url).filter(Boolean);
     const text = `${content.title}\n\n${content.body}\n\n${tags}`.trim();
+    const imageText = images.length ? `\n\n图片路径：\n${images.join('\n')}` : '';
 
     try {
-      await navigator.clipboard.writeText(text);
+      await navigator.clipboard.writeText(text + imageText);
       window.open(PUBLISH_URL, '_blank');
-      alert('已复制内容到剪贴板，并打开发布页，请手动上传图片并点击发布。');
+      alert('已复制内容+图片路径到剪贴板，并打开发布页，请手动上传图片并点击发布。');
     } catch (err) {
       console.error(err);
       alert('复制失败，请检查浏览器权限');
