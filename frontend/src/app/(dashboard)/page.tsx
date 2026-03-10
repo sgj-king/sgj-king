@@ -93,7 +93,7 @@ export default function HomePage() {
         const [overviewRes, contentsRes, trendsRes] = await Promise.all([
           analyticsApi.overview(7),
           contentsApi.list({ status: 'published', per_page: 100 }),
-          analyticsApi.trends(7, 'likes'),
+          analyticsApi.trends(7, 'views'),
         ]);
 
         if (!overviewRes.error) {
@@ -147,7 +147,7 @@ export default function HomePage() {
 
   const trendPoints = useMemo(() => {
     if (!trends.length) return '';
-    const values = trends.map((t) => t.likes || 0);
+    const values = trends.map((t) => t.views || 0);
     const max = Math.max(...values, 1);
     const min = Math.min(...values, 0);
     const range = Math.max(max - min, 1);
@@ -196,7 +196,7 @@ export default function HomePage() {
       
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="rounded-2xl border border-slate-200 bg-white p-6">
-          <h2 className="text-lg font-semibold text-slate-900">数据趋势（点赞）</h2>
+          <h2 className="text-lg font-semibold text-slate-900">数据趋势（浏览量）</h2>
           <div className="mt-4 h-64 flex items-center justify-center">
             {trends.length === 0 ? (
               <div className="text-slate-400 flex items-center">
