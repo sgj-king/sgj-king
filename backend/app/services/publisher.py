@@ -27,6 +27,7 @@ class PublishResult:
     note_url: Optional[str] = None
     error: Optional[str] = None
     debug_dir: Optional[str] = None
+    manual_required: bool = False
 
 
 class XiaohongshuPublisher:
@@ -142,15 +143,21 @@ class XiaohongshuPublisher:
             debug_dir = await self._dump_debug("login_exception")
             return False, f"登录异常：{exc}. debug={debug_dir}"
 
-    async def publish_note(self, *, cookies: List[Dict], title: str, body: str, tags: List[str] | None = None) -> PublishResult:
-        """发布笔记（占位实现）
+    async def publish_note(
+        self,
+        *,
+        cookies: List[Dict],
+        title: str,
+        body: str,
+        tags: List[str] | None = None,
+        images: List[Dict] | None = None,
+        mode: str = "semi",  # semi | full
+        publish_url: str = "https://creator.xiaohongshu.com/publish/publish?source=official&from=menu&target=image",
+    ) -> PublishResult:
+        """发布笔记（半自动优先）
 
-        说明：由于缺少你当前可用的发布页面/流程信息，这里先把框架搭好。
-        接下来需要你提供：
-        - 手动发布路径（从 explore 到发布页）
-        - 发布页关键元素的截图或 HTML（用 debug 输出即可）
-
-        我会据此补齐 selector，实现真正可用的自动发布。
+        - semi：自动打开发布页 + 上传图片 + 尝试填充内容；最后一步由用户手动点击发布
+        - full：预留全自动发布（后续补齐 selector）
         """
 
         ok, err = await self.login_with_cookies(cookies)
@@ -159,14 +166,57 @@ class XiaohongshuPublisher:
 
         try:
             assert self._page
+            await self._page.goto(publish_url, wait_until="domcontentloaded")
+            await self._page.wait_for_timeout(2000)
 
-            # TODO: 这里需要根据实际页面实现：进入发布页 -> 填充内容 -> 上传图片 -> 添加话题 -> 点击发布
-            # 先输出一份 debug，便于你提供页面结构。
-            debug_dir = await self._dump_debug("before_publish_not_implemented")
+            # 上传图片（如果有）
+            if images:
+                input_el = await self._page.query_selector("input.upload-input")
+                if not input_el:
+                    debug_dir = await self._dump_debug("publish_upload_input_missing")
+                    return PublishResult(ok=False, error="发布页未加载出上传入口（可能被风控拦截）", debug_dir=debug_dir)
 
+                files = []
+                for img in images:
+                    path = img.get("url") if isinstance(img, dict) else str(img)
+                    if path and not path.startswith("/"):
+                        # 相对路径默认指向 /app（容器内）
+                        path = "/app/" + path.lstrip("/")
+                    if path:
+                        files.append(path)
+
+                if files:
+                    await input_el.set_input_files(files)
+                    await self._page.wait_for_timeout(3000)
+
+            # 尝试填充标题/正文（尽量不依赖具体 selector）
+            # 注意：当前发布页 DOM 可能动态渲染，若无法定位，直接进入手动确认阶段
+            # 标题输入：常见 placeholder 包含“标题”
+            title_input = await self._page.query_selector('input[placeholder*="标题"], textarea[placeholder*="标题"]')
+            if title_input:
+                await title_input.fill(title)
+
+            body_input = await self._page.query_selector('textarea[placeholder*="正文"], textarea[placeholder*="内容"], [contenteditable="true"]')
+            if body_input:
+                try:
+                    await body_input.fill(body)
+                except Exception:
+                    pass
+
+            debug_dir = await self._dump_debug("publish_semi_ready")
+
+            if mode == "semi":
+                return PublishResult(
+                    ok=False,
+                    manual_required=True,
+                    error="已完成自动填充，请手动点击发布",
+                    debug_dir=debug_dir,
+                )
+
+            # full 自动发布：后续补齐 selector（暂时返回未实现）
             return PublishResult(
                 ok=False,
-                error="发布流程未实现：需要根据发布页 selector 补齐自动化步骤",
+                error="全自动发布未实现（待补齐 selector）",
                 debug_dir=debug_dir,
             )
 

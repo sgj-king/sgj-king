@@ -4,6 +4,7 @@ Celery 定时任务配置
 from celery import Celery
 from celery.schedules import crontab
 import asyncio
+import os
 from datetime import datetime, timedelta
 
 from app.main import create_app
@@ -121,6 +122,9 @@ def process_publish_queue(self, batch_size: int = 5):
                             title=content.title,
                             body=content.body,
                             tags=content.tags or [],
+                            images=content.images or [],
+                            mode=os.getenv('PUBLISH_MODE', 'semi'),
+                            publish_url=os.getenv('XHS_PUBLISH_IMAGE_URL', 'https://creator.xiaohongshu.com/publish/publish?source=official&from=menu&target=image'),
                         )
 
                 publish_result = asyncio.run(do_publish())
@@ -145,18 +149,29 @@ def process_publish_queue(self, batch_size: int = 5):
                         except Exception:
                             pass
                 else:
-                    item.status = 'failed'
-                    item.error_message = getattr(publish_result, 'error', None) or '发布失败'
-                    item.processed_at = datetime.utcnow()
+                    # 半自动发布：需要人工点击发布
+                    if getattr(publish_result, 'manual_required', False):
+                        item.status = 'manual'
+                        item.error_message = getattr(publish_result, 'error', None) or '需要手动点击发布'
+                        item.processed_at = datetime.utcnow()
 
-                    content.status = 'failed'
-                    content.error_message = item.error_message
+                        content.status = 'manual'
+                        content.error_message = item.error_message
 
-                    # 重试策略：对于未知异常/临时故障，让 Celery 负责重试
-                    if self.request.retries < self.max_retries:
-                        raise self.retry(exc=Exception(item.error_message), countdown=60)
+                        results.append({'queue_id': str(item.id), 'content_id': str(content.id), 'status': 'manual', 'error': item.error_message})
+                    else:
+                        item.status = 'failed'
+                        item.error_message = getattr(publish_result, 'error', None) or '发布失败'
+                        item.processed_at = datetime.utcnow()
 
-                    results.append({'queue_id': str(item.id), 'content_id': str(content.id), 'status': 'failed', 'error': item.error_message})
+                        content.status = 'failed'
+                        content.error_message = item.error_message
+
+                        # 重试策略：对于未知异常/临时故障，让 Celery 负责重试
+                        if self.request.retries < self.max_retries:
+                            raise self.retry(exc=Exception(item.error_message), countdown=60)
+
+                        results.append({'queue_id': str(item.id), 'content_id': str(content.id), 'status': 'failed', 'error': item.error_message})
 
             except Exception as exc:
                 item.status = 'failed'
