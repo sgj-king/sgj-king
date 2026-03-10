@@ -32,11 +32,14 @@
 # 1) 启动后端依赖
 cd redflow
 
-# 2) 启动后端/worker/beat
+# 2) 准备环境变量
+cp backend/.env.example backend/.env
+
+# 3) 启动后端/worker/beat
 # （首次会构建镜像）
 docker-compose up -d backend celery celery-beat mysql redis tdengine
 
-# 3) 启动前端
+# 4) 启动前端
 cd frontend
 npm install
 npm run dev
@@ -51,7 +54,7 @@ http://localhost:3000
 
 ## 🔐 环境变量（backend/.env）
 
-> 已内置默认 `.env`，可按需调整
+> 参考 `backend/.env.example`
 
 关键项：
 ```
