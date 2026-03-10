@@ -11,8 +11,14 @@ except Exception:  # noqa: S110
     TDengineService = None
     tdengine_service = None
 
-from app.services.ai.dqn_optimizer import DQNPublisher, ReplayBuffer
-from app.services.ai.ga_optimizer import GAPublisher
+# AI optimizers (optional)
+try:
+    from app.services.ai.dqn_optimizer import DQNPublisher, ReplayBuffer
+    from app.services.ai.ga_optimizer import GAPublisher
+except Exception:  # noqa: S110
+    DQNPublisher = None
+    ReplayBuffer = None
+    GAPublisher = None
 
 __all__ = [
     'encrypt_data',
