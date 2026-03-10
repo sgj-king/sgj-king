@@ -117,7 +117,7 @@ services:
       - redis
       - mysql
       - tdengine
-    command: celery -A app.celery worker -l info
+    command: celery -A app.celery_tasks worker -l info
 
   # Celery beat scheduler
   celery-beat:
