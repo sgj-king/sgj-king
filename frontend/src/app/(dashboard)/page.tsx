@@ -65,6 +65,15 @@ interface ContentItem {
   };
 }
 
+interface TrendItem {
+  date: string;
+  likes: number;
+  collects: number;
+  comments: number;
+  shares: number;
+  views: number;
+}
+
 function formatNumber(num: number) {
   if (num >= 10000) return `${(num / 10000).toFixed(1)}w`;
   if (num >= 1000) return `${(num / 1000).toFixed(1)}k`;
@@ -74,15 +83,17 @@ function formatNumber(num: number) {
 export default function HomePage() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [contents, setContents] = useState<ContentItem[]>([]);
+  const [trends, setTrends] = useState<TrendItem[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     (async () => {
       setLoading(true);
       try {
-        const [overviewRes, contentsRes] = await Promise.all([
+        const [overviewRes, contentsRes, trendsRes] = await Promise.all([
           analyticsApi.overview(7),
           contentsApi.list({ status: 'published', per_page: 100 }),
+          analyticsApi.trends(7, 'likes'),
         ]);
 
         if (!overviewRes.error) {
@@ -90,6 +101,9 @@ export default function HomePage() {
         }
         if (!contentsRes.error) {
           setContents(contentsRes.data?.contents || []);
+        }
+        if (!trendsRes.error) {
+          setTrends(trendsRes.data?.trends || []);
         }
       } finally {
         setLoading(false);
@@ -131,6 +145,25 @@ export default function HomePage() {
       .slice(0, 3);
   }, [contents]);
 
+  const trendPoints = useMemo(() => {
+    if (!trends.length) return '';
+    const values = trends.map((t) => t.likes || 0);
+    const max = Math.max(...values, 1);
+    const min = Math.min(...values, 0);
+    const range = Math.max(max - min, 1);
+    const width = 320;
+    const height = 160;
+    const step = trends.length > 1 ? width / (trends.length - 1) : width;
+
+    return values
+      .map((v, i) => {
+        const x = i * step;
+        const y = height - ((v - min) / range) * height;
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      })
+      .join(' ');
+  }, [trends]);
+
   return (
     <div className="space-y-8">
       <div>
@@ -163,10 +196,29 @@ export default function HomePage() {
       
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="rounded-2xl border border-slate-200 bg-white p-6">
-          <h2 className="text-lg font-semibold text-slate-900">数据趋势</h2>
-          <div className="mt-4 h-64 flex items-center justify-center text-slate-400">
-            <ChartBar size={48} />
-            <span className="ml-2">暂无趋势数据</span>
+          <h2 className="text-lg font-semibold text-slate-900">数据趋势（点赞）</h2>
+          <div className="mt-4 h-64 flex items-center justify-center">
+            {trends.length === 0 ? (
+              <div className="text-slate-400 flex items-center">
+                <ChartBar size={48} />
+                <span className="ml-2">暂无趋势数据</span>
+              </div>
+            ) : (
+              <div className="w-full">
+                <svg viewBox="0 0 320 160" className="w-full h-40">
+                  <polyline
+                    fill="none"
+                    stroke="#0ea5e9"
+                    strokeWidth="3"
+                    points={trendPoints}
+                  />
+                </svg>
+                <div className="mt-2 flex justify-between text-xs text-slate-400">
+                  <span>{trends[0]?.date}</span>
+                  <span>{trends[trends.length - 1]?.date}</span>
+                </div>
+              </div>
+            )}
           </div>
         </div>
         
