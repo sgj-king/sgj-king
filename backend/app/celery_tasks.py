@@ -50,7 +50,7 @@ celery_app.conf.beat_schedule = {
 }
 
 
-@celery_app.task(bind=True)
+@celery_app.task(bind=True, max_retries=3)
 def process_publish_queue(self, batch_size: int = 5):
     """处理发布队列（最小可用版本）
 
@@ -96,17 +96,72 @@ def process_publish_queue(self, batch_size: int = 5):
                     results.append({'queue_id': str(item.id), 'status': 'failed', 'error': item.error_message})
                     continue
 
-                # 占位：发布执行器未实现
-                item.status = 'failed'
-                item.error_message = '发布执行器未实现（publisher not implemented yet）'
+                account = XHSAccount.query.get(item.account_id)
+                if not account or not account.cookies_encrypted:
+                    item.status = 'failed'
+                    item.error_message = '账号未配置 Cookie'
+                    content.status = 'failed'
+                    content.error_message = item.error_message
+                    results.append({'queue_id': str(item.id), 'content_id': str(content.id), 'status': 'failed', 'error': item.error_message})
+                    continue
 
-                content.status = 'failed'
-                content.error_message = item.error_message
+                cookies_dict = decrypt_data(account.cookies_encrypted)
+                cookies = [
+                    {'name': k, 'value': v, 'domain': '.xiaohongshu.com', 'path': '/'}
+                    for k, v in (cookies_dict or {}).items()
+                ]
 
-                results.append({'queue_id': str(item.id), 'content_id': str(content.id), 'status': 'failed', 'error': item.error_message})
+                # 发布执行器（当前为最小骨架；后续补齐 selector）
+                from app.services.publisher import XiaohongshuPublisher
+
+                async def do_publish():
+                    async with XiaohongshuPublisher(headless=True, timeout_ms=flask_app.config.get('PLAYWRIGHT_TIMEOUT', 30000)) as pub:
+                        return await pub.publish_note(
+                            cookies=cookies,
+                            title=content.title,
+                            body=content.body,
+                            tags=content.tags or [],
+                        )
+
+                publish_result = asyncio.run(do_publish())
+
+                if getattr(publish_result, 'ok', False):
+                    item.status = 'success'
+                    item.error_message = None
+                    item.processed_at = datetime.utcnow()
+
+                    content.status = 'published'
+                    content.published_at = datetime.utcnow()
+                    content.error_message = None
+                    content.xhs_note_id = publish_result.note_id
+                    content.xhs_note_url = publish_result.note_url
+
+                    results.append({'queue_id': str(item.id), 'content_id': str(content.id), 'status': 'success', 'note_id': publish_result.note_id})
+
+                    # 发布成功后立即触发一次采集（如果 note_id 已拿到）
+                    if publish_result.note_id:
+                        try:
+                            collect_single_note.delay(str(content.id))
+                        except Exception:
+                            pass
+                else:
+                    item.status = 'failed'
+                    item.error_message = getattr(publish_result, 'error', None) or '发布失败'
+                    item.processed_at = datetime.utcnow()
+
+                    content.status = 'failed'
+                    content.error_message = item.error_message
+
+                    # 重试策略：对于未知异常/临时故障，让 Celery 负责重试
+                    if self.request.retries < self.max_retries:
+                        raise self.retry(exc=Exception(item.error_message), countdown=60)
+
+                    results.append({'queue_id': str(item.id), 'content_id': str(content.id), 'status': 'failed', 'error': item.error_message})
+
             except Exception as exc:
                 item.status = 'failed'
                 item.error_message = str(exc)
+                item.processed_at = datetime.utcnow()
                 results.append({'queue_id': str(item.id), 'status': 'failed', 'error': item.error_message})
 
         db.session.commit()
