@@ -1,0 +1,148 @@
+# RedFlow Docker Compose config
+
+services:
+  # MySQL database
+  mysql:
+    image: mysql:8.0
+    container_name: redflow-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root123
+      MYSQL_DATABASE: redflow
+      MYSQL_USER: redflow
+      MYSQL_PASSWORD: redflow123
+    volumes:
+      - mysql_data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+    command: --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # TDengine time-series database
+  tdengine:
+    image: tdengine/tdengine:latest
+    container_name: tdengine
+    environment:
+      TZ: Asia/Shanghai
+    volumes:
+      - tdengine_data:/var/lib/taos
+    ports:
+      - "6030:6030"
+      - "6041:6041"
+      - "6043:6043"
+    healthcheck:
+      test: ["CMD", "taos", "-s", "select server_version()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis cache and queue
+  redis:
+    image: redis:7-alpine
+    container_name: redflow-redis
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Flask backend
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: redflow-backend
+    environment:
+      - FLASK_ENV=development
+      - DATABASE_URL=mysql+pymysql://redflow:redflow123@mysql:3306/redflow
+      - REDIS_URL=redis://redis:6379/0
+      - TDENGINE_HOST=tdengine
+      - TDENGINE_PORT=6030
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+    volumes:
+      - ./backend:/app
+    ports:
+      - "5050:5050"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      tdengine:
+        condition: service_healthy
+    command: python run.py
+
+  # Next.js frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: redflow-frontend
+    environment:
+      - NEXT_TELEMETRY_DISABLED=1
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+      - frontend_next:/app/.next
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    command: npm run dev -- -H 0.0.0.0 -p 3000
+
+  # Celery worker
+  celery:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: redflow-celery
+    environment:
+      - DATABASE_URL=mysql+pymysql://redflow:redflow123@mysql:3306/redflow
+      - REDIS_URL=redis://redis:6379/0
+      - TDENGINE_HOST=tdengine
+      - TDENGINE_PORT=6030
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - redis
+      - mysql
+      - tdengine
+    command: celery -A app.celery worker -l info
+
+  # Celery beat scheduler
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: redflow-celery-beat
+    environment:
+      - DATABASE_URL=mysql+pymysql://redflow:redflow123@mysql:3306/redflow
+      - REDIS_URL=redis://redis:6379/0
+      - TDENGINE_HOST=tdengine
+      - TDENGINE_PORT=6030
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - redis
+      - mysql
+      - tdengine
+    command: celery -A app.celery_tasks beat -l info
+
+volumes:
+  mysql_data:
+  tdengine_data:
+  redis_data:
+  frontend_node_modules:
+  frontend_next:
